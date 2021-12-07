@@ -1,0 +1,16 @@
+[package]
+edition = "2021"
+keywords = ["async", "task", "future", "track", "tracker", "restart"]
+license = "MIT"
+name = "task-tracker"
+readme = "README.md"
+repository = "https://github.com/popen2/task-tracker"
+version = "0.1.0"
+
+[dependencies]
+futures = "0.3.18"
+log = "*"
+tokio = {version = "1", features = ["sync", "rt", "macros", "time"]}
+
+[dev-dependencies]
+env_logger = "0.9"
