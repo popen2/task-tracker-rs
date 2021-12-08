@@ -5,7 +5,7 @@ license = "MIT"
 name = "task-tracker"
 readme = "README.md"
 repository = "https://github.com/popen2/task-tracker"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies]
 futures = "0.3.18"

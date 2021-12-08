@@ -52,6 +52,7 @@ where
     }
 
     pub async fn add(&self, key: K, task: BoxFuture<'static, R>) -> Option<TaskResult<R>> {
+        debug!("Adding new task for key={:?}", key);
         let join_handle = {
             let mut inner = self.inner.write().await;
             self._add(&mut inner, key, task)
@@ -67,14 +68,14 @@ where
     ) -> Option<task::JoinHandle<TaskResult<R>>> {
         let (stop_tx, stop_rx) = oneshot::channel::<()>();
         let join_handle = Self::_remove(inner, &key);
-        debug!("Adding new stop_ch for {:?}", key);
+        trace!("Adding new stop_ch for {:?}", key);
         inner.stop_chs.insert(key.clone(), stop_tx);
-        debug!("Adding new join handle for {:?}", key);
+        trace!("Adding new join handle for {:?}", key);
         let inner2 = self.inner.clone();
         inner.tasks.insert(
             key.clone(),
             task::spawn(async move {
-                debug!("Task {:?} running", key);
+                debug!("Task {:?} started", key);
                 let result = select! {
                     task_result = task => {
                         debug!("Task {:?} finished", key);
@@ -93,6 +94,7 @@ where
     }
 
     pub async fn remove(&self, key: &K) -> Option<TaskResult<R>> {
+        debug!("Removing task with key={:?}", key);
         let join_handle = {
             let mut inner = self.inner.write().await;
             Self::_remove(&mut inner, key)
@@ -117,16 +119,16 @@ where
         inner: &mut RwLockWriteGuard<'_, Inner<K, R>>,
         key: &K,
     ) -> Option<task::JoinHandle<TaskResult<R>>> {
-        debug!("Removing stop_ch of {:?}", key);
+        trace!("Removing stop_ch of {:?}", key);
         if let Some(stop_tx) = inner.stop_chs.remove(key) {
             stop_tx.send(()).unwrap();
         }
-        debug!("Removing join handle of {:?}", key);
+        trace!("Removing join handle of {:?}", key);
         if let Some(join_handle) = inner.tasks.remove(key) {
-            debug!("Found join handle for task {:?}", key);
+            trace!("Found join handle for task {:?}", key);
             Some(join_handle)
         } else {
-            debug!("There was no join handle for {:?}", key);
+            trace!("There was no join handle for {:?}", key);
             None
         }
     }
