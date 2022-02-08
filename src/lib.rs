@@ -13,7 +13,7 @@ use tokio::{select, task};
 pub struct TaskTracker<K, R>
 where
     K: Clone + Eq + Hash + Sync + Send + Debug + 'static,
-    R: Sync + Send + 'static,
+    R: Sync + Send + std::fmt::Debug + 'static,
 {
     inner: Arc<RwLock<Inner<K, R>>>,
 }
@@ -21,7 +21,7 @@ where
 #[derive(Debug)]
 pub enum TaskResult<R>
 where
-    R: Sync + Send + 'static,
+    R: Sync + Send + std::fmt::Debug + 'static,
 {
     Done(R),
     Cancelled,
@@ -31,7 +31,7 @@ where
 pub struct Inner<K, R>
 where
     K: Clone + Eq + Hash + Sync + Send + Debug + 'static,
-    R: Sync + Send + 'static,
+    R: Sync + Send + std::fmt::Debug + 'static,
 {
     stop_chs: HashMap<K, oneshot::Sender<()>>,
     tasks: HashMap<K, task::JoinHandle<TaskResult<R>>>,
@@ -40,7 +40,7 @@ where
 impl<K, R> TaskTracker<K, R>
 where
     K: Clone + Eq + Hash + Sync + Send + Debug + 'static,
-    R: Sync + Send + 'static,
+    R: Sync + Send + std::fmt::Debug + 'static,
 {
     pub fn new() -> Self {
         Self {
@@ -78,7 +78,7 @@ where
                 debug!("Task {:?} started", key);
                 let result = select! {
                     task_result = task => {
-                        debug!("Task {:?} finished", key);
+                        debug!("Task {:?} finished: {:?}", key, task_result);
                         TaskResult::Done(task_result)
                     },
                     _ = stop_rx => {
