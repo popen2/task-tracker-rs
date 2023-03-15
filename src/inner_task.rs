@@ -60,6 +60,10 @@ where
         }
     }
 
+    pub fn is_finished(&self) -> bool {
+        self.join_handle.is_finished()
+    }
+
     pub async fn wait(self) -> TaskResult<R> {
         match self.join_handle.await {
             Ok(task_result) => task_result,

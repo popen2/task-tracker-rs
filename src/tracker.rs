@@ -1,7 +1,5 @@
 use crate::inner_task::{InnerTask, TaskResult};
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::hash::Hash;
+use hashbrown::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::debug;
@@ -9,7 +7,7 @@ use tracing::debug;
 #[derive(Clone)]
 pub struct TaskTracker<K, R>
 where
-    K: Clone + Eq + Hash + Sync + Send + std::fmt::Debug + 'static,
+    K: Clone + Eq + std::hash::Hash + Sync + Send + std::fmt::Debug + 'static,
     R: Sync + Send + std::fmt::Debug + 'static,
 {
     inner: Arc<RwLock<HashMap<K, InnerTask<K, R>>>>,
@@ -17,7 +15,7 @@ where
 
 impl<K, R> TaskTracker<K, R>
 where
-    K: Clone + Eq + Hash + Sync + Send + std::fmt::Debug + 'static,
+    K: Clone + Eq + std::hash::Hash + Sync + Send + std::fmt::Debug + 'static,
     R: Sync + Send + std::fmt::Debug + 'static,
 {
     pub fn new() -> Self {
@@ -48,22 +46,45 @@ where
         }
     }
 
-    pub async fn apply<S, F, Fut>(&self, keys: S, create_task: F)
+    pub async fn apply<I, IT, G, F, Fut>(
+        &self,
+        iter: IT,
+        get_key: G,
+        create_task: F,
+    ) -> HashMap<K, TaskResult<R>>
     where
-        S: Iterator<Item = K>,
-        F: Fn(&K) -> Fut,
+        IT: IntoIterator<Item = I>,
+        G: Fn(&I) -> &K,
+        F: Fn(I) -> Fut,
         Fut: std::future::Future<Output = R> + Send + 'static,
     {
-        let old_keys: HashSet<_> = self.inner.read().await.keys().cloned().collect();
-        let new_keys: HashSet<_> = keys.collect();
+        let mut finished = self.remove_finished().await;
+        let mut old_keys: HashSet<K> = self.inner.read().await.keys().cloned().collect();
 
-        for to_remove in old_keys.difference(&new_keys) {
-            self.remove(to_remove).await;
+        for item in iter {
+            let key = get_key(&item);
+            if !old_keys.remove(key) {
+                self.add(key.to_owned(), create_task(item)).await;
+            }
         }
 
-        for to_add in new_keys.difference(&old_keys) {
-            self.add(to_add.to_owned(), create_task(to_add)).await;
+        for key in old_keys {
+            let result = self.remove(&key).await;
+            if let Some(result) = result {
+                finished.insert(key, result);
+            }
         }
+
+        finished
+    }
+
+    pub async fn remove_finished(&self) -> HashMap<K, TaskResult<R>> {
+        let mut results = HashMap::new();
+        let mut inner = self.inner.write().await;
+        for (key, inner_task) in inner.drain_filter(|_, inner_task| inner_task.is_finished()) {
+            results.insert(key, inner_task.wait().await);
+        }
+        results
     }
 
     pub async fn wait_for_tasks(&self) -> HashMap<K, TaskResult<R>> {
