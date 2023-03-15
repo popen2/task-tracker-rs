@@ -1,5 +1,4 @@
 use futures::future::BoxFuture;
-use log::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Debug;
@@ -8,6 +7,7 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 use tokio::sync::{RwLock, RwLockWriteGuard};
 use tokio::{select, task};
+use tracing::debug;
 
 #[derive(Clone)]
 pub struct TaskTracker<K, R>
@@ -52,37 +52,35 @@ where
     }
 
     pub async fn add(&self, key: K, task: BoxFuture<'static, R>) -> Option<TaskResult<R>> {
-        debug!("Adding new task for key={:?}", key);
         let join_handle = {
             let mut inner = self.inner.write().await;
-            self._add(&mut inner, key, task)
+            self.add_inner(&mut inner, key.clone(), task)
         };
-        Self::_await_join_handle(join_handle).await
+        Self::await_join_handle(&key, join_handle).await
     }
 
-    fn _add<'a>(
+    fn add_inner<'a>(
         &'a self,
         inner: &mut RwLockWriteGuard<'a, Inner<K, R>>,
         key: K,
         task: BoxFuture<'static, R>,
     ) -> Option<task::JoinHandle<TaskResult<R>>> {
         let (stop_tx, stop_rx) = oneshot::channel::<()>();
-        let join_handle = Self::_remove(inner, &key);
-        trace!("Adding new stop_ch for {:?}", key);
+        let join_handle = Self::remove_inner(inner, &key);
+        debug!(?key, "adding new task");
         inner.stop_chs.insert(key.clone(), stop_tx);
-        trace!("Adding new join handle for {:?}", key);
         let inner2 = self.inner.clone();
         inner.tasks.insert(
             key.clone(),
             task::spawn(async move {
-                debug!("Task {:?} started", key);
+                debug!(?key, "task started");
                 let result = select! {
                     task_result = task => {
-                        debug!("Task {:?} finished: {:?}", key, task_result);
+                        debug!(?key, ?task_result,"task finished");
                         TaskResult::Done(task_result)
                     },
                     _ = stop_rx => {
-                        debug!("Task {:?} cancelled", key);
+                        debug!(?key, "task cancelled");
                         TaskResult::Cancelled
                     },
                 };
@@ -94,18 +92,19 @@ where
     }
 
     pub async fn remove(&self, key: &K) -> Option<TaskResult<R>> {
-        debug!("Removing task with key={:?}", key);
         let join_handle = {
             let mut inner = self.inner.write().await;
-            Self::_remove(&mut inner, key)
+            Self::remove_inner(&mut inner, key)
         };
-        Self::_await_join_handle(join_handle).await
+        Self::await_join_handle(key, join_handle).await
     }
 
-    async fn _await_join_handle(
+    async fn await_join_handle(
+        key: &K,
         handle: Option<task::JoinHandle<TaskResult<R>>>,
     ) -> Option<TaskResult<R>> {
         if let Some(handle) = handle {
+            debug!(?key, "waiting for task to finish");
             Some(match handle.await {
                 Ok(task_result) => task_result,
                 Err(join_error) => TaskResult::JoinError(join_error),
@@ -115,20 +114,17 @@ where
         }
     }
 
-    fn _remove(
+    fn remove_inner(
         inner: &mut RwLockWriteGuard<'_, Inner<K, R>>,
         key: &K,
     ) -> Option<task::JoinHandle<TaskResult<R>>> {
-        trace!("Removing stop_ch of {:?}", key);
         if let Some(stop_tx) = inner.stop_chs.remove(key) {
             stop_tx.send(()).unwrap();
         }
-        trace!("Removing join handle of {:?}", key);
         if let Some(join_handle) = inner.tasks.remove(key) {
-            trace!("Found join handle for task {:?}", key);
+            debug!(?key, "removed previous task");
             Some(join_handle)
         } else {
-            trace!("There was no join handle for {:?}", key);
             None
         }
     }
@@ -143,21 +139,22 @@ where
         let new_keys: HashSet<_> = keys.collect();
 
         for to_remove in old_keys.difference(&new_keys) {
-            Self::_remove(&mut inner, to_remove);
+            Self::remove_inner(&mut inner, to_remove);
         }
 
         for to_add in new_keys.difference(&old_keys) {
-            self._add(&mut inner, to_add.to_owned(), create_task(to_add));
+            self.add_inner(&mut inner, to_add.to_owned(), create_task(to_add));
         }
     }
 
     pub async fn wait_for_tasks(&self) -> HashMap<K, TaskResult<R>> {
         let mut results = HashMap::new();
-        debug!("Waiting for all tasks to finish");
+        debug!("waiting for all tasks to finish");
         let mut inner = self.inner.write().await;
         for (key, join_handle) in inner.tasks.drain() {
-            debug!("Waiting for task {:?}", key);
-            let result = Self::_await_join_handle(Some(join_handle)).await.unwrap();
+            let result = Self::await_join_handle(&key, Some(join_handle))
+                .await
+                .unwrap();
             results.insert(key, result);
         }
         inner.stop_chs.drain();

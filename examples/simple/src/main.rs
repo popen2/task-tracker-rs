@@ -1,24 +1,33 @@
-use futures::FutureExt;
+use futures::{future::pending, FutureExt};
 use task_tracker::{TaskResult, TaskTracker};
 use tokio::{task::yield_now, time};
+use tracing::{info, metadata::LevelFilter};
 
-#[tokio::test(flavor = "current_thread")]
-async fn test_two_tasks() {
-    env_logger::init();
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
+    tracing_subscriber::fmt()
+        .with_max_level(LevelFilter::TRACE)
+        .with_target(true)
+        .with_ansi(true)
+        .with_level(true)
+        .init();
 
-    log::info!("Creating tracker");
+    info!("Creating tracker");
     let tracker = TaskTracker::<u64, u32>::new();
 
-    log::info!("Adding task 0");
-    assert!(matches!(tracker.add(0, async { 0 }.boxed()).await, None));
+    info!("Adding task 0");
+    assert!(matches!(
+        tracker.add(0, async { pending().await }.boxed()).await,
+        None
+    ));
 
-    log::info!("Overriding task 0");
+    info!("Overriding task 0");
     assert!(matches!(
         tracker.add(0, async { 0 }.boxed()).await,
         Some(TaskResult::Cancelled)
     ));
 
-    log::info!("Adding task 1");
+    info!("Adding task 1");
     assert!(matches!(
         tracker
             .add(
@@ -33,7 +42,7 @@ async fn test_two_tasks() {
         None
     ));
 
-    log::info!("Removing task 1");
+    info!("Removing task 1");
     assert!(matches!(
         tracker.remove(&1).await,
         Some(TaskResult::Cancelled)
@@ -41,9 +50,9 @@ async fn test_two_tasks() {
 
     yield_now().await;
 
-    log::info!("Waiting for tasks");
+    info!("Waiting for tasks");
     let results = tracker.wait_for_tasks().await;
-    log::debug!("Results: {:?}", results);
+    info!(?results);
 
     assert!(matches!(results[&0], TaskResult::Done(0)));
 }
