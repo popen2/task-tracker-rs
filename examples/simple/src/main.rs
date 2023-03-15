@@ -21,11 +21,15 @@ async fn main() {
         None
     ));
 
+    yield_now().await;
+
     info!("Overriding task 0");
     assert!(matches!(
         tracker.add(0, async { 0 }.boxed()).await,
         Some(TaskResult::Cancelled)
     ));
+
+    yield_now().await;
 
     info!("Adding task 1");
     assert!(matches!(
@@ -41,6 +45,8 @@ async fn main() {
             .await,
         None
     ));
+
+    yield_now().await;
 
     info!("Removing task 1");
     assert!(matches!(
